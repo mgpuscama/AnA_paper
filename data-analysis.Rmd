@@ -1,0 +1,265 @@
+---
+title: "data-analysis"
+author: "M. Gabriela Puscama"
+date: "10/8/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r Load Packages}
+
+library(tidyverse)
+library(stringr)
+
+```
+
+```{r Load Data}
+
+# Ratings Lists
+
+dataA <- read_csv("./data/scores_ListA_full.csv")
+dataB <- read_csv("./data/scores_ListB_full.csv")
+dataC <- read_csv("./data/scores_ListC_full.csv")
+dataD <- read_csv("./data/scores_ListD_full.csv")
+
+# Stimuli Info
+
+stimuli <- read_csv("./data/stimuli.csv")
+
+```
+
+```{r Exclusions}
+
+# Initial participants
+
+nrow(dataA) + nrow(dataB) + nrow(dataC) + nrow(dataD)
+#[1] 205
+
+## LIST A
+
+#Initial N=52
+
+# Preliminary exclusions
+dataA_clean <- dataA %>%
+  filter(PrelimExclusions == "No")
+# Two participants excluded from List A, one because they completed the survey twice (only first instance kept), and one because they did not complete the survey. N=50
+
+# Language background exclusions
+dataA_clean <- dataA_clean %>%
+  filter(L1_Eng == "Yes")
+
+# 1 person excluded because they reported not being born and raised speaking English. N=49
+
+# List A Final N=49
+
+## List B
+
+# Initial N=50
+
+# Preliminary exclusions
+dataB_clean <- dataB %>%
+  filter(PerlimExclusions == "No")
+# No preliminary exclusions from List B. N=50
+
+# Language background exclusions
+dataB_clean <- dataB_clean %>%
+  filter(L1_Eng == "Yes") %>%
+  filter(Participant != "B9")
+# 1 participant excluded because they reported that between the ages of 0 and 5 only Spanish was spoken at their home. N=49. 
+
+# List B Final N=49
+
+## List C
+
+# Initial N= 53
+
+# Preliminary exclusions
+
+dataC_clean <- dataC %>%
+  filter(PrelimExclusions == "No")
+
+# 1 participant excluded because they didn't complete the survey. N=52.
+
+# Language background exclusions
+
+dataC_clean <- dataC_clean %>%
+  filter(L1_Eng == "Yes") %>%
+  filter(Participant != "C12")
+
+# 1 participant excluded because they reported that between the ages of 0 and 5 only Chinese was spoken at their home. N=51.
+
+# List C Final N=51
+
+## List D
+
+# Initial N=50
+
+# Preliminary exclusions
+dataD_clean <- dataD %>%
+  filter(PrelimExclusions=="No")
+
+# No prelim exclusions. N=50
+
+# Language background exclusions
+dataD_clean <- dataD_clean %>%
+  filter(L1_Eng == "Yes")
+# No participants excluded.
+
+# List D final N=50.
+
+# Final total N
+nrow(dataA_clean) + nrow(dataB_clean) + nrow(dataC_clean) + nrow(dataD_clean)
+#[1] 199
+
+```
+
+```{r Demographics}
+
+dataA_dem <- dataA_clean %>%
+  select(2:6)
+dataB_dem <- dataB_clean %>%
+  select(2:6)
+dataC_dem <- dataC_clean %>%
+  select(2:6)
+dataD_dem <- dataD_clean %>%
+  select(2:6)
+
+data_dem <- rbind(dataA_dem, dataB_dem, dataC_dem, dataD_dem)
+
+data_dem$Gender <- as.factor(data_dem$Gender)
+
+summary(data_dem)
+
+```
+
+
+```{r Wrangling}
+
+#ListA
+dataA_final <- dataA_clean %>%
+  gather(Item, Score, 7:73)%>%
+  mutate(Item = str_replace(Item, "X.Field.5....", ""))%>%
+  mutate(Item = str_replace(Item, "...C", ""))
+
+dataA_final$List <- ifelse(str_detect(dataA_final$Item,"Filler"), "All", "A")
+
+# Eliminate extra columns
+dataA_final <- dataA_final %>%
+  select(Participant, List, Gender, Age, languages_spoken, languages_home_0_5, languages_home_13_18, languages_home_13_18, foreign_lang_classes, foreign_languages, foreign_lang_time, caregivers_other_lang, foreign_travel, foreign_travel_country, Item, Score)
+
+#ListB
+dataB_final <- dataB_clean %>%
+  gather(Item, Score, 7:72)%>%
+  mutate(Item = str_replace(Item, "X.Field.5....", ""))%>%
+  mutate(Item = str_replace(Item, "...C", ""))
+
+dataB_final$List <- ifelse(str_detect(dataB_final$Item,"Filler"), "All", "B")
+
+# Eliminate extra columns
+dataB_final <- dataB_final %>%
+  select(Participant, List, Gender, Age, languages_spoken, languages_home_0_5, languages_home_13_18, languages_home_13_18, foreign_lang_classes, foreign_languages, foreign_lang_time, caregivers_other_lang, foreign_travel, foreign_travel_country, Item, Score)
+
+#ListC
+dataC_final <- dataC_clean %>%
+  gather(Item, Score, 7:73)%>%
+  mutate(Item = str_replace(Item, "X.Field.5....", ""))%>%
+  mutate(Item = str_replace(Item, "...C", ""))
+
+dataC_final$List <- ifelse(str_detect(dataC_final$Item,"Filler"), "All", "C")
+
+# Eliminate extra columns
+dataC_final <- dataC_final %>%
+  select(Participant, List, Gender, Age, languages_spoken, languages_home_0_5, languages_home_13_18, languages_home_13_18, foreign_lang_classes, foreign_languages, foreign_lang_time, caregivers_other_lang, foreign_travel, foreign_travel_country, Item, Score)
+
+#ListD
+dataD_final <- dataD_clean %>%
+  gather(Item, Score, 7:73)%>%
+  mutate(Item = str_replace(Item, "X.Field.5....", ""))%>%
+  mutate(Item = str_replace(Item, "...C", ""))
+
+dataD_final$List <- ifelse(str_detect(dataD_final$Item,"Filler"), "All", "D")
+
+# Eliminate extra columns
+dataD_final <- dataD_final %>%
+  select(Participant, List, Gender, Age, languages_spoken, languages_home_0_5, languages_home_13_18, languages_home_13_18, foreign_lang_classes, foreign_languages, foreign_lang_time, caregivers_other_lang, foreign_travel, foreign_travel_country, Item, Score)
+
+
+#Bring all lists together
+data_full <- rbind(dataA_final, dataB_final, dataC_final, dataD_final) #Only works when all data frames have the same columns.
+
+# Clean item number:
+data_full <- data_full %>%
+  mutate(Item = str_replace_all(Item, " ", "")) %>%
+  mutate(Item = str_replace_all(Item, "-" , "")) %>%
+  mutate(Item = str_replace_all(Item,"\\[Field5\\]", "")) # Need double backslash to escape [], otherwise R thinks it's a range...
+
+#Combine scores data with stimuli data
+data_full <- inner_join(data_full, stimuli) 
+
+write.csv(data_full, "./data/data_final_updated.csv")
+
+```
+
+```{r Visualizations}
+
+#Bar graph
+plot <- data_full %>%
+  filter(TrialType=="Experimental") %>%
+  ggplot(aes(x=Score)) + geom_bar() + facet_wrap(~Target_Art)
+plot
+ggsave("./graphs/bars_new.png", width=5, height=5)
+
+#Density plot
+plot2 <- data_full %>%
+  filter(TrialType == "Experimental") %>%
+  ggplot(aes(x=Score, fill=Target_Art)) + geom_density(alpha=0.2)
+plot2
+ggsave("./graphs/density_new.png", width=5, height=5)
+
+```
+
+```{r Info for paper}
+
+# How many ratings each sentence received?
+
+counts <- data_full %>% 
+  filter(Target_Art == "a" | Target_Art == "an") %>%
+  group_by(Item, Target_Art) %>%
+  summarize(N = n_distinct(Participant))
+
+mean(counts$N)
+#[1] 99.5
+
+```
+
+
+```{r t test}
+
+A <- filter(data_full, ArticleCond == "A")
+N <- filter(data_full, ArticleCond == "N")
+
+t.test(A$Score, N$Score, paired=T, alternative="two.sided")
+
+#	Paired t-test
+
+#data:  A$Score and N$Score
+#t = 12.105, df = 3183, p-value < 2.2e-16
+#alternative hypothesis: true difference in means is not equal to 0
+#95 percent confidence interval:
+# 0.4421735 0.6131029
+#sample estimates:
+#mean of the differences 
+#              0.5276382 
+
+sd(A$Score)
+#[1] 1.760149
+
+sd(N$Score)
+#[1] 1.931553
+
+```
+
+
