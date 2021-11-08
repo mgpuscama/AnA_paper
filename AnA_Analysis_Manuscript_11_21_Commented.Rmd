@@ -1,0 +1,2012 @@
+---
+title: "R Script used in AnA 2021 Analyis for Manuscript Publication"
+  pdf_document: default
+  html_document: default
+editor_options:
+  chunk_output_type: console
+  fig_width: 10 
+fig_height: 8 
+---
+## Install and load required packages
+```{r Load Packages, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(extrafont)
+library(tidyverse)
+library(knitr)
+library(lme4)
+library(lmerTest)
+library(LMERConvenienceFunctions)
+library(qdapTools)
+opts_chunk$set(tidy.opts=list(width.cutoff=60),tidy=TRUE)
+```
+
+# load data and code factors
+```{r Load Data}
+# Load Main ET Dataset
+data_raw<-read_tsv("./data/AnA_Analysis_Grandad_KC.txt")
+
+# Rename Participant Code Column and make all lowercase for compatibility with other data sets
+data_raw$Code<-tolower(data_raw$RECORDING_SESSION_LABEL)
+head(data_raw)
+
+# Load in Picture Naming Results
+PicName<-read_csv("./data/AnAPicture_Naming_Results.csv",na = c(".", " ","#N/A"),col_names =TRUE)
+head(PicName)
+
+# Load in LHQ data
+LHQ<-read_csv("./data/LHQ_updated.csv",na = c(".", " ","#N/A"),col_names =TRUE)
+head(LHQ)
+
+# Set factors and recode as needed
+data_raw$match<-as.factor(data_raw$match)
+data_raw$match<-recode(data_raw$match, Match = "Same")
+data_raw$match<-recode(data_raw$match, Mismatch = "Different")
+data_raw$article<-recode(data_raw$article, N = "An")
+
+summary(data_raw$match)
+```
+
+# Add in LHQ data
+```{r Add LHQ}
+# Left join to add LHQ data to main ET dataset
+data <- left_join(data_raw, LHQ)
+
+# Check Left join worked as desired
+LHQcheck<-data%>%
+  select(Code:SpnVF)%>%
+  distinct()
+
+LHQcheck<-as.tibble(sort(unique(LHQcheck$Code)))
+```
+
+# Process LHQ data and remove participants as needed due to LHQ responses
+```{r Process LHQ}
+(OriginalSubCount<-as.tibble(sort(unique(data$Code)))) # Subject count checks 
+
+ExcludeL1L2<-filter(data, Language1 %in% c("Spanish", "Castellano")) # Exclude participants whose L1 is not Spanish or Castellano
+
+(L1L2<-as.tibble(sort(unique(ExcludeL1L2$Code)))) # check those included
+
+(MedialSubCount1<-as.tibble(sort(unique(ExcludeL1L2$Code)))) # Subject count checks 
+
+# check those excluded to list codes below
+LostL1L2<-filter(data, !Language1 %in% c("Spanish", "Castellano")) 
+(LostL1L2code<-as.tibble(sort(unique((LostL1L2$Code)))))
+
+
+# Lost 13 to Language background   (9 not Span L1 and 4 didn't fill it out so no L1 or VF)
+# aligua22
+# anacej12
+# anavas09
+# blabal66
+# dianea37
+# ivavla11
+# lucara26
+# matcur86
+# mar03
+# patmic05
+# paumar31
+# pilluq66
+# roxpun55
+
+
+# Further exclude those who did not have a verbal fluency score
+ExcludeL1L2$EngVF<-as.numeric(ExcludeL1L2$EngVF)
+ExcludeNA<-filter(ExcludeL1L2, !is.na(EngVF))
+ExcludeNA<-filter(ExcludeNA, !Code%in% c("jesnal24"))
+
+# check those excluded to list codes below
+LostNA<-filter(ExcludeL1L2, is.na(EngVF))
+(lostNAcode<-as.tibble(sort(unique(LostNA$Code))))
+
+# Lost 4 to VF
+# 1 aidloz27
+# 2 jesnal24
+# 3 raqmat67
+# 4 trican39
+
+# reset "data" to be the data set with all exclusions applied
+data<-ExcludeNA
+
+# Final Check
+Prof_final<-data%>%
+  select(Code:SpnVF)%>%
+  distinct()%>%
+  mutate_if(is.character, as.factor)
+
+(MedialSubCount2<-as.tibble(sort(unique(Prof_final$Code)))) # Subject count checks 
+
+# Recode Castellano to Spanish
+data$Group<-as.factor(data$Group)
+data$Group[data$Group=="Castellano"] <- "Spanish"
+summary(data$Group)
+
+(MedialSubCount<-as.tibble(sort(unique(data$Code))))# Subject count checks 
+```
+
+#Format Picture naming
+```{r Format Picture Naming}
+summary(PicName)
+
+# Format Picture Naming results Computes mean accuracy and RTs by participant by each langauge 
+# NOTE: less than 80 is to remove error point not to exculde based on accuracy
+picname<-PicName%>%
+  filter(Accuracy<80,OnsetLatency<80)%>%
+    mutate(Code = factor(Code))%>%
+  group_by(Code,Lang)%>%
+  summarise(meanPN_RT = mean(OnsetLatency),
+            meanPN_Acc = mean(Accuracy))%>%
+  mutate(Lang = factor(Lang),
+         Code = factor(Code))
+
+summary(picname)
+View(picname)
+
+# Plot Picture Naming Accuracy by RTs 
+ggplot(picname, aes(meanPN_RT, meanPN_Acc))+
+geom_point()+
+  facet_wrap(~Lang)
+```
+
+
+# Remane Columns
+# Remove unnessecary columns
+```{r Remove Columns, message=FALSE, warning=FALSE}
+data<-data%>%
+  rename(Target =  `RIGHT_IA_1_SAMPLE_COUNT_%`,
+         Competitor =  `RIGHT_IA_2_SAMPLE_COUNT_%`,
+         Distracter1 =  `RIGHT_IA_3_SAMPLE_COUNT_%`,
+         Distracter2 =  `RIGHT_IA_4_SAMPLE_COUNT_%`,
+         Other =  `RIGHT_IA_0_SAMPLE_COUNT_%`)%>%
+  select(BIN_INDEX ,   
+          BIN_SAMPLE_COUNT,
+          Target,  
+          Competitor,  
+          Distracter1,  
+          Distracter2,
+          TRIAL_START_TIME,   
+          GridLocation, 
+          RT_ONSET_MOUSE_1:RT_ONSET_MOUSE_4,
+          artdur, 
+          article,   
+          c_freq_hal:SpnVF
+          )
+```
+
+
+#Calculate how much data will be lost due to excluding wrong clicks to distractors and percent clicks to target vs competitor
+```{r Calculate Data Loss}
+data$trialtype<-as_factor(data$trialtype)
+
+(percent<-data %>% 
+    filter(trialtype=="E")%>%
+    count(item_Clicked) %>% 
+  mutate(percent = n / sum(n) * 100))
+
+# item_Clicked      n percent
+#* <chr>         <int>   <dbl>
+#1 competitor     1747   0.858
+#2 dist4          2157   1.06 
+#3 none            773   0.380
+#4 target       198852  97.7 
+
+```
+
+
+# Check Article Duration
+```{r Check Article Duration}
+# By Match Condition
+(art_length<-data%>%
+  group_by(match)%>%
+  summarize(Duration=mean(artdur, na.rm=TRUE)))
+
+# By article
+(art_length2<-data%>%
+  group_by(article)%>%
+  summarize(Duration=mean(artdur, na.rm=TRUE)))
+```
+
+# Set Time Variables
+```{r Set Time}
+# Bin_Index starts at 0, so 1 is added to each bin to make the first bin bin 1
+# The data was exported such that each bin include 10 ms of data.  TimeMS therefore multiplies the Bin by 10 to get a tiem scale in MS
+data$TimeAdjusted<-data$BIN_INDEX+1
+data$TimeMS<-data$TimeAdjusted*10
+```
+
+# Filter out incorrect clicks, fillers and practice items
+```{r Filter items}
+data$item<-as.factor(data$item)
+data_exp<-filter(data, item_Clicked %in% c("target"), trialtype=="E")
+#data_fill<-filter(data, item_Clicked %in% c("target"), trialtype=="F")
+```
+
+# Picture Naming for table
+```{r Format Picture Naming for Table}
+# Look at Subject Codes of particpants to be included according to main ET dat set previously filtered for LHQ and Verbal fluency. 
+(Subjects<-select(data_exp, Code))
+(include<-unique(Subjects$Code))
+
+# Filter the pictur enaming results to only the participants to be included in the main analysis.
+(PictureNaming<-filter(picname,Code %in% include))
+
+PictureNaming$Code<-as.factor(PictureNaming$Code)
+
+#Checks
+summary(PictureNaming$Code)
+sort(include)
+
+
+
+#Select Columns
+(PictureNaming<-PictureNaming%>%
+   select(Code,Lang,meanPN_RT,meanPN_Acc))
+summary(PictureNaming)
+
+#Group by Subject
+(PicNameBySub<-group_by(PictureNaming,Code, Lang))
+
+#Summarize RT and seperate langue colomns, rename
+(PicNameRT<-summarize(PicNameBySub, 
+                  meanRT=mean(meanPN_RT)))
+(RTsort<-spread(PicNameRT, key = Lang, value = meanRT))
+
+(RTsort<-RTsort%>%
+  rename(EngRT =  Eng,
+         SpanRT =  Span))
+
+#Summarize Accuracy and seperate language colomns, rename
+(PicNameAcc<-summarize(PicNameBySub, 
+                  meanAccuracy=mean(meanPN_Acc)))
+
+(AccSort<-spread(PicNameAcc, key = Lang, value = meanAccuracy))
+
+(AccSort<-AccSort%>%
+  rename(EngAcc =  Eng,
+         SpanAcc =  Span))
+
+#Join RT and Accuracy back together
+(PictureNaming_BySub <- left_join(AccSort, RTsort))
+summary(PictureNaming_BySub)
+
+sd(PictureNaming_BySub$EngAcc)
+#0.1172126
+sd(PictureNaming_BySub$SpanAcc)
+#0.04626301
+sd(PictureNaming_BySub$EngRT)
+#0.4508464
+sd(PictureNaming_BySub$SpanRT)
+#0.2566435
+summary(PictureNaming_BySub$EngRT)
+
+#Check
+View(PictureNaming_BySub)
+
+
+### t.test RESULTS  ###
+t.test(PictureNaming_BySub$EngAcc,PictureNaming_BySub$SpanAcc,paired = TRUE)
+t.test(PictureNaming_BySub$EngRT, PictureNaming_BySub$SpanRT,paired = TRUE)
+```
+
+
+# Add in PicName data
+```{r Add PicName Data to Main}
+data <- left_join(data, picname)
+```
+
+
+#Outliers Check
+```{r, Outliers Check}
+# Plot target fixations over time by participant
+# looking for flat lines indicating lack of fixation tracking 
+ggplot(data_exp,
+       aes(TimeMS,
+           Target,
+           linetype=match,
+           color=match)
+       )+
+  facet_wrap(~Code
+             )+
+  stat_summary(fun=mean,
+               geom="line",
+               size=1)
++
+  stat_summary(fun.data=mean_se,
+               geom="smooth",
+               size=0.5
+               )+
+  theme_bw(base_size=12
+           )+
+  labs(x="Time (Ms)",
+       y="Proportion of Fixations"
+       )+
+  theme(legend.justification=c(0,1),
+        legend.position="right",
+        legend.background=element_rect(color="black",
+                                       fill="white")
+        )+
+  geom_hline(yintercept = 0
+             )+
+  coord_cartesian(ylim = c(0.0, 1.0)
+                  )+
+  scale_linetype_manual(values=c("solid", "solid")
+                        )+
+  scale_color_manual(values=c("red", "black")
+                     )
+
+#Plot by item
+ggplot(data_exp,
+       aes(TimeMS,
+           Target,
+           linetype=match,
+           color=match)
+       )+
+  facet_wrap(~item
+             )+
+  stat_summary(fun=mean,
+               geom="line",
+               size=1
+               )+
+  stat_summary(fun.data=mean_se,
+               geom="smooth",
+               size=0.5
+               )+
+  theme_bw(base_size=12
+           )+
+  labs(x="Time (Ms)",
+       y="Proportion of Fixations"
+       )+
+  theme(legend.justification=c(0,1),
+        legend.position="right",
+        legend.background=element_rect(color="black",
+                                       fill="white")
+        )+
+  geom_hline(yintercept = 0
+             )+
+  coord_cartesian(ylim = c(0.0, 1.0)
+                  )+
+  scale_linetype_manual(values=c("solid",
+                                 "solid")
+                        )+
+  scale_color_manual(values=c("red",
+                              "black")
+                     )
+```
+
+#Exclude participants based on lack of fixations
+```{r}
+#lost 2 to lack of fixations 
+
+#salenr78 (compelte lack of fixations)
+#lidgom69 (complete lack in early window)
+
+data_exp <- data_exp%>%
+  filter(!Code %in% c("salenr78","lidgom69"))
+```
+
+
+# Bin Prof variables
+## Verbal Fluency
+```{r}
+# Format Verbal Fluency as numberic
+data_exp$EngVF<-as.numeric(data_exp$EngVF)
+data_exp$SpnVF<-as.numeric(data_exp$SpnVF)
+
+#Check
+summary(data_exp)
+
+
+# Format data for t-test to a single row per participant for the desired columns
+data_ttest<-data_exp%>%
+  select(Code, EngVF,SpnVF)%>%
+  distinct()
+
+# t test
+t.test(data_ttest$EngVF,data_ttest$SpnVF, data=data_ttest,paired = TRUE)
+
+ 
+# Checks
+data_VF<-data_exp%>%
+  select(EngVF,SpnVF)
+
+summary(data_VF)
+hist(data_exp$EngVF)
+
+
+# Create median centered EngVF variable
+data_exp$EngVF_median<-data_exp$EngVF-34
+
+# Create Median bined EngVF variable
+data_exp$EngVF_Bin<-ifelse(data_exp$EngVF>=34,"High Proficiency","Low Proficiency")
+
+# Reformat new variables
+data_exp$EngVF_Bin<-as.factor(data_exp$EngVF_Bin)
+data_exp$EngVF_Bin<-fct_relevel(data_exp$EngVF_Bin, "High Proficiency", after = 1)
+
+#Check Levels
+levels(data_exp$EngVF_Bin)
+```
+
+# Format Data for proficiency Table in paper
+```{r Format Proficiency Table}
+# Format data for table
+(data_prof<- select(data_exp, Code,Gender:SpnVF))
+(data_Prof<-unique(data_prof))
+data_Prof$Gender<-as.factor(data_Prof$Gender)
+data_Prof$Code<-as.factor(data_Prof$Code)
+
+summary(data_Prof)
+
+
+#Gender count
+(data_Gender<-data_Prof%>%
+    select(Code, Gender)%>%
+    distinct()
+  )
+
+data_Gender$Gender<-as.factor(data_Gender$Gender)
+
+summary(data_Gender)
+
+
+
+# Self Report Variables
+data_Prof$Span_Speaking<-as.numeric(data_Prof$Span_Speaking)
+data_Prof$Span_Reading<-as.numeric(data_Prof$Span_Reading)
+data_Prof$Span_Writing<-as.numeric(data_Prof$Span_Writing)
+data_Prof$Span_Listening<-as.numeric(data_Prof$Span_Listening)
+
+summary(data_Prof)
+
+
+
+# Final Table for Paper
+(data_Prof_Table<-data_Prof%>%
+    drop_na()%>%
+  summarize(Age_mean=mean(Age, na.rm=TRUE),
+            Age_sd=sd(Age),
+            Eng_Speaking_mean=mean(Eng_Speaking, na.rm=TRUE),
+            Eng_Speaking_sd=sd(Eng_Speaking),
+            Eng_Reading_mean=mean(Eng_Reading, na.rm=TRUE),
+            Eng_Reading_sd=sd(Eng_Reading),
+            Eng_Writing_mean=mean(Eng_Writing, na.rm=TRUE),
+            Eng_Writing_sd=sd(Eng_Writing),
+            Eng_Understanding_mean=mean(Eng_Understanding, na.rm=TRUE),
+            Eng_Understanding_sd=sd(Eng_Understanding),
+            EngVF_mean=mean(EngVF, na.rm=TRUE),
+            EngVF_sd=sd(EngVF),
+            Span_Speaking_mean=mean(Span_Speaking, na.rm=TRUE),
+            Span_Speaking_sd=sd(Span_Speaking),
+            Span_Reading_mean=mean(Span_Reading, na.rm=TRUE),
+            Span_Reading_sd=sd(Span_Reading),
+            Span_Writing_mean=mean(Span_Writing, na.rm=TRUE),
+            Span_Writing_sd=sd(Span_Writing),
+            Span_Understanding_mean=mean(Span_Listening, na.rm=TRUE),
+            Span_Understanding_sd=sd(Span_Listening),
+            SpnVF_mean=mean(SpnVF, na.rm=TRUE),
+            SpnVF_sd=sd(SpnVF)
+            )
+  )
+
+# Write table to CSV for insertion into paper
+write_csv(data_Prof_Table, "./data_Prof_Table_updated.csv", na = "NA")
+```
+
+
+# Average distracters together in prep for graphs
+```{r}
+data_exp<-  mutate(data_exp, Distracter=(Distracter1+Distracter2)/2)
+```
+
+
+# Tidy - 
+## Restrict Time to 0-1500ms
+## Gather columns to put in long format
+## Create new colum for graph for the graph to create lines for each fixation type by condition
+```{r}
+data_ana_1500_TCD<-data_exp %>% 
+  filter(TimeMS<=1500)%>%
+  gather(`Target`, `Competitor`,`Distracter`, key = "Fixation_Object", value = "Fixation_Proportion")
+
+
+# Set and recode factor variables 
+data_ana_1500_TCD$match<-data_ana_1500_TCD$match%>%
+  recode(`Same` = "Same Article",
+         `Different` = "Different Article")
+
+data_ana_1500_TCD$Fixation_Object<- as_factor(data_ana_1500_TCD$Fixation_Object)
+
+data_ana_1500_TCD$Fixation_Object<- fct_relevel(data_ana_1500_TCD$Fixation_Object, "Target", after = 0)
+
+data_ana_1500_TCD$Fixation_Object<- fct_relevel(data_ana_1500_TCD$Fixation_Object, "Competitor", after = 1)
+
+data_ana_1500_TCD<-data_ana_1500_TCD %>% 
+  mutate(FixByCond = paste(Fixation_Object, match, sep = " "))
+
+data_ana_1500_TCD$FixByCond<- as_factor(data_ana_1500_TCD$FixByCond)
+
+# Checks
+levels(data_ana_1500_TCD$Fixation_Object)
+summary(data_ana_1500_TCD)
+```
+
+# Final subject count for analysis
+```{r}
+(FinalSubCount<-as.tibble(sort(unique(data_ana_1500_TCD$Code))))
+```
+
+# Main plot Full time-window Match condition
+```{r AllPlot}
+# Plot Full time window raw proportion looks to each fixation object on the screen split by match condition
+(RawFixationsbyObject<-ggplot(data_ana_1500_TCD,
+                 aes(TimeMS,
+                     Fixation_Proportion,
+                     linetype=FixByCond,
+                     color=FixByCond)
+                 )+
+   stat_summary(fun.y=mean,
+                geom="line",
+                size=1
+                )+
+   stat_summary(fun.data=mean_se,
+                geom="ribbon",
+                alpha=0.2,
+                color=NA
+                )+
+   theme_bw(base_size=12
+            )+ 
+   labs(x="Time (Ms)",
+        y="Proportion of Fixations"
+        )+
+   theme(legend.justification=c(0,1),
+        legend.position="right",
+        legend.title = element_blank(),
+        legend.background=element_rect(color="black",
+                                       fill="white"),
+        text = element_text(family="Times New Roman",
+                            size=25)
+        )+
+   geom_hline(yintercept = 0
+              )+
+   coord_cartesian(ylim = c(0.0, 0.75)
+                   )+
+   scale_linetype_manual(values=c("solid",
+                                  "solid",
+                                  "dashed",
+                                  "dashed",
+                                  "dotted",
+                                  "dotted")
+                         )+
+   scale_color_manual(values=c("red",
+                               "black",
+                               "red",
+                               "black",
+                               "red",
+                               "black")
+                      )+ 
+   scale_x_continuous(breaks = c(0,200,400,600,800,1000,1200,1400)
+                     )+
+   annotate("rect",
+            xmin = 200,
+            xmax = 564,
+            ymin = -.15,
+            ymax = .75,
+            alpha = .2
+            )+
+   annotate("text",
+            family = "Times New Roman",
+            x = 350,
+            y = .65,
+            label = "Article",
+            size=8
+            )+
+   annotate("rect",
+            xmin = 565,
+            xmax = 1064,
+            ymin = -.15,
+            ymax = .75,
+            alpha = .1
+            )+
+   annotate("text",
+            family = "Times New Roman",
+            x = 810,
+            y = .65,
+            label = "Pause",
+            size=8
+            )+
+   annotate("rect",
+            xmin = 1065,
+            xmax = 1500,
+            ymin = -.15,
+            ymax = .75,
+            alpha = .2
+            )+
+   annotate("text",
+            family = "Times New Roman",
+            x = 1300,
+            y = .65,
+            label = "Noun",
+            size=8
+            )
+ )
+
+#Save plot
+ggsave("./graphs/RawFixationsbyObject.png",
+       plot = RawFixationsbyObject,
+       width = 40,
+       height = 20,
+       units = "cm"
+       )
+```
+
+
+# Main plot Full time-window Match condition by article
+```{r ByArticlePlot}
+# Plot Full time window raw proportion looks to each fixation object on the screen split by match condition with facet by article ( a/an )
+
+(RawFixationsbyObject_Article<- (ggplot(data_ana_1500_TCD,
+                        aes(TimeMS,
+                            Fixation_Proportion,
+                            linetype=FixByCond,
+                            color=FixByCond
+                            )
+                        )+
+                   facet_wrap(~article
+                              )+
+                   stat_summary(fun.y=mean,
+                                geom="line",
+                                size=1
+                                )+
+                   stat_summary(fun.data=mean_se,
+                                geom="ribbon",
+                                alpha=0.2,
+                                color=NA
+                                )+
+                   theme_bw(base_size=12
+                            )+ 
+                   labs(x="Time (Ms)",
+                        y="Proportion of Fixations"
+                        )+
+                   theme(legend.justification=c(0,1),
+                        legend.position="right",
+                        legend.title = element_blank(),
+                        legend.background=element_rect(color="black",
+                                                       fill="white"),        
+                        text = element_text(family="Times New Roman",
+                                            size=25)
+                        )+
+                   geom_hline(yintercept = 0
+                              )+
+                   coord_cartesian(ylim = c(0.0, 0.75)
+                                  )+
+                   scale_linetype_manual(values=c("solid",
+                                                  "solid",
+                                                  "dashed",
+                                                  "dashed",
+                                                  "dotted",
+                                                  "dotted")
+                                        )+
+                   scale_color_manual(values=c("red",
+                                               "black",
+                                               "red",
+                                               "black",
+                                               "red",
+                                               "black")
+                                     )+
+                   scale_x_continuous(breaks = c(0,200,400,600,800,1000,1200,1400)
+                                      )+
+                   annotate("rect",
+                            xmin = 200,
+                            xmax = 564,
+                            ymin = -.15,
+                            ymax = .75,
+                            alpha = .2
+                            )+
+                   annotate("text",
+                            family = "Times New Roman",
+                            x = 350,
+                            y = .65,
+                            label = "Article",
+                            size=8
+                            )+
+                   annotate("rect",
+                            xmin = 565,
+                            xmax = 1064,
+                            ymin = -.15,
+                            ymax = .75,
+                            alpha = .1
+                            )+
+                   annotate("text",
+                            family = "Times New Roman",
+                            x = 810,
+                            y = .65,
+                            label = "Pause",
+                            size=8
+                            )+
+                   annotate("rect",
+                            xmin = 1065,
+                            xmax = 1500,
+                            ymin = -.15,
+                            ymax = .75,
+                            alpha = .2
+                            )+
+                   annotate("text",
+                            family = "Times New Roman",
+                            x = 1300,
+                            y = .65,
+                            label = "Noun",
+                            size=8)
+                 )
+ )
+
+ggsave("./graphs/RawFixationsbyObject_Article.png",
+       plot = RawFixationsbyObject_Article,
+       width = 40,
+       height = 20,
+       units = "cm"
+       )
+
+```
+
+# Main plot Full time-window Match condition by Verbal Fluency
+```{r ByVFProfPlot}
+# Plot Full time window raw proportion looks to each fixation object on the screen split by match condition with facet by Median split Verbal fluency
+(RawFixationsbyObject_VerbalFluency<-(ggplot(data_ana_1500_TCD,
+                       aes(TimeMS,
+                       Fixation_Proportion,
+                       linetype=FixByCond,
+                       color=FixByCond)
+                   )+
+              facet_wrap(~EngVF_Bin
+                         )+
+              stat_summary(fun.y=mean,
+                           geom="line",
+                           size=1
+                           )+
+              stat_summary(fun.data=mean_se,
+                           geom="ribbon",
+                           alpha=0.2,
+                           color=NA
+                           )+
+              theme_bw(base_size=12
+                       )+ 
+              labs(x="Time (Ms)", y="Proportion of Fixations"
+                   )+
+              theme(legend.justification=c(0,1),
+                    legend.position="right",
+                    legend.title = element_blank(),
+                    legend.background=element_rect(color="black",
+                                                   fill="white"),        
+                    text = element_text(family="Times New Roman",
+                                        size=25)
+                    )+
+              geom_hline(yintercept = 0
+                         )+
+              coord_cartesian(ylim = c(0.0,
+                                       0.75)
+                              )+
+              scale_linetype_manual(values=c("solid",
+                                             "solid",
+                                             "dashed",
+                                             "dashed",
+                                             "dotted",
+                                             "dotted")
+                                    )+
+              scale_color_manual(values=c("red",
+                                          "black",
+                                          "red",
+                                          "black",
+                                          "red",
+                                          "black")
+                                 )+ 
+              scale_x_continuous(breaks = c(0,200,400,600,800,1000,1200,1400)
+                                 )+
+              annotate("rect",
+                       xmin = 200,
+                       xmax = 564,
+                       ymin = -.15,
+                       ymax = .75,
+                       alpha = .2
+                       )+
+              annotate("text",
+                       family = "Times New Roman",
+                       x = 350,
+                       y = .65,
+                       label = "Article",
+                       size=8
+                       )+
+              annotate("rect",
+                       xmin = 565,
+                       xmax = 1064,
+                       ymin = -.15,
+                       ymax = .75,
+                       alpha = .1
+                       )+
+              annotate("text",
+                       family = "Times New Roman",
+                       x = 810,
+                       y = .65,
+                       label = "Pause",
+                       size=8
+                       )+
+              annotate("rect",
+                       xmin = 1065,
+                       xmax = 1500,
+                       ymin = -.15,
+                       ymax = .75,
+                       alpha = .2
+                       )+
+              annotate("text",
+                       family = "Times New Roman",
+                       x = 1300,
+                       y = .65,
+                       label = "Noun",
+                       size=8
+                       )
+              )
+ )
+
+ggsave("./graphs/RawFixationsbyObject_VerbalFluency.png",
+       plot = RawFixationsbyObject_VerbalFluency,
+       width = 40,
+       height = 20,
+       units = "cm"
+       )
+
+```
+
+
+#Main Plot Facet Grid
+```{r}
+#Main plot Match facet grid Article and Proficiency
+
+(RawFixationsbyObject_Grid_ArticleVerbalFluency<-ggplot(data_ana_1500_TCD,
+                 aes(TimeMS,
+                     Fixation_Proportion,
+                     linetype=FixByCond,
+                     color=FixByCond)
+                 )+
+                  facet_grid(article~EngVF_Bin
+                             )+
+                  stat_summary(fun.y=mean, geom="line", size=1
+                               )+
+                  stat_summary(fun.data=mean_se,
+                               geom="ribbon",
+                               alpha=0.2,
+                               color=NA
+                               )+
+                  theme_bw(base_size=12
+                           )+ 
+                  labs(x="Time (Ms)",
+                       y="Proportion of Fixations"
+                       )+
+                  theme(legend.justification=c(0,1),
+                        legend.position="right",
+                        legend.title = element_blank(),
+                        legend.background=element_rect(color="black", fill="white"),        
+                        text = element_text(family="Times New Roman",size=20)
+                        )+
+                  geom_hline(yintercept = 0
+                             )+
+                  coord_cartesian(ylim = c(0.0, 0.75)
+                                  )+
+                  scale_linetype_manual(values=c("solid",
+                                                 "solid",
+                                                 "dashed",
+                                                 "dashed",
+                                                 "dotted",
+                                                 "dotted")
+                                        )+
+                  scale_color_manual(values=c("red",
+                                              "black",
+                                              "red",
+                                              "black",
+                                              "red",
+                                              "black")
+                                     )+ 
+                  scale_x_continuous(breaks = c(0,200,400,600,800,1000,1200,1400)
+                                     )+
+                  annotate("rect",
+                           xmin = 200,
+                           xmax = 564,
+                           ymin = -.15,
+                           ymax = .75,
+                           alpha = .2
+                           )+
+                  annotate("text",
+                           family = "Times New Roman",
+                           x = 350,
+                           y = .70,
+                           label = "Article",
+                           size=6
+                           )+
+                  annotate("rect",
+                           xmin = 565,
+                           xmax = 1064,
+                           ymin = -.15,
+                           ymax = .75,
+                           alpha = .1
+                           )+
+                  annotate("text",
+                           family = "Times New Roman",
+                           x = 810,
+                           y = .70,
+                           label = "Pause",
+                           size=6
+                           )+
+                  annotate("rect",
+                           xmin = 1065,
+                           xmax = 1500,
+                           ymin = -.15,
+                           ymax = .75,
+                           alpha = .2
+                           )+
+                  annotate("text",
+                           family = "Times New Roman",
+                           x = 1300,
+                           y = .70,
+                           label = "Noun",
+                           size=6)
+ )
+
+
+ggsave("./graphs/RawFixationsbyObject_Grid_ArticleVerbalFluency.png",
+       plot = RawFixationsbyObject_Grid_ArticleVerbalFluency,
+       width = 40,
+       height = 20,
+       units = "cm"
+       )
+```
+
+
+# Difference Plots Target-Competitor
+```{r}
+# Creating difference score - Target-Competitor
+data_ana_1500<-data_exp%>%
+  filter(TimeMS<=1500)%>%
+  mutate(DiffTC=Target-Competitor, 
+         DiffCD=Competitor-Distracter)
+```
+
+
+# Difference TC plots
+```{r}
+#Main Difference plot with Match only
+(DifferencePlot_Condition <- ggplot(data_ana_1500,
+                       aes(TimeMS,
+                           DiffTC,
+                           linetype=match,
+                           color=match
+                           )
+                       )+
+                        stat_summary(fun.y=mean,
+                                     geom="line",
+                                     size=1
+                                     )+
+                        stat_summary(fun.data=mean_se,
+                                     geom="ribbon",
+                                     alpha=0.2,
+                                     color=NA
+                                     )+
+                        theme_bw(base_size=12
+                                 )+
+                        labs(x="Time (Ms)",
+                             y="Differential Proportion of Fixations"
+                             )+ 
+                        theme(legend.justification=c(0,1), 
+                              legend.position="right",
+                              legend.title = element_blank(),
+                              legend.background=element_rect(color="black",
+                                                             fill="white"),
+                              text = element_text(family="Times New Roman",
+                                                  size=25
+                                                  )
+                              )+
+                        geom_hline(yintercept = 0
+                                   )+
+                        coord_cartesian(ylim = c(-0.15, 1
+                                                 )
+                                        )+
+                        scale_linetype_manual(values=c("solid", "solid"
+                                                       )
+                                              )+
+                        scale_color_manual(values=c("red", "black"
+                                                    )
+                                           )+
+                        scale_x_continuous(breaks = c(0,400,800,1200
+                                                      )
+                                           )+
+                        annotate("rect",
+                                 xmin = 200,
+                                 xmax = 564,
+                                 ymin = -.15,
+                                 ymax = 1,
+                                 alpha = .2
+                                 )+
+                        annotate("text",
+                                 family = "Times New Roman",
+                                 x = 380,
+                                 y = .75,
+                                 label = "Article",
+                                 size=8
+                                 )+
+                        annotate("rect",
+                                 xmin = 565,
+                                 xmax = 1064,
+                                 ymin = -.15,
+                                 ymax = 1,
+                                 alpha = .1
+                                 )+
+                        annotate("text",
+                                 family = "Times New Roman",
+                                 x = 810,
+                                 y = .75,
+                                 label = "Pause",
+                                 size=8
+                                 )+
+                        annotate("rect",
+                                 xmin = 1065,
+                                 xmax = 1500,
+                                 ymin = -.15,
+                                 ymax = 1,
+                                 alpha = .2
+                                 )+
+                        annotate("text",
+                                 family = "Times New Roman",
+                                 x = 1300,
+                                 y = .75,
+                                 label = "Noun",
+                                 size=8)
+ )
+```
+
+# Diff Match by Article
+```{r}
+#Main Difference plot with Match by Article
+
+(DifferencePlot_Condition_byArticle<-ggplot(data_ana_1500,
+                          aes(TimeMS,DiffTC,
+                              linetype=match,
+                              color=match)
+                          )+
+                          stat_summary(fun.y=mean,
+                                       geom="line",
+                                       size=1
+                                       )+
+                          facet_wrap(~article
+                                     )+
+                          stat_summary(fun.data=mean_se,
+                                       geom="ribbon",
+                                       alpha=0.2,
+                                       color=NA
+                                       )+
+                          theme_bw(base_size=12
+                                   )+
+                          labs(x="Time (Ms)",
+                               y="Differential Proportion of Fixations"
+                               )+ 
+                          theme(legend.justification=c(0,1), 
+                                legend.position="right",
+                                legend.title = element_blank(),
+                                legend.background=element_rect(color="black",
+                                                               fill="white"),
+                                text = element_text(family="Times New Roman",
+                                                    size=25)
+                                )+
+                          geom_hline(yintercept = 0
+                                     )+
+                          coord_cartesian(ylim = c(-0.15, 1)
+                                          )+
+                          scale_linetype_manual(values=c("solid",
+                                                         "solid")
+                                                )+
+                          scale_color_manual(values=c("red",
+                                                      "black")
+                                             )+
+                          scale_x_continuous(breaks = c(0,400,800,1200)
+                                             )+
+                          annotate("rect",
+                                   xmin = 200,
+                                   xmax = 564,
+                                   ymin = -.15,
+                                   ymax = 1,
+                                   alpha = .2
+                                   )+
+                          annotate("text",
+                                   family = "Times New Roman",
+                                   x = 380,
+                                   y = .75,
+                                   label = "Article",
+                                   size=8
+                                   )+
+                          annotate("rect",
+                                   xmin = 565,
+                                   xmax = 1064,
+                                   ymin = -.15,
+                                   ymax = 1,
+                                   alpha = .1
+                                   )+
+                          annotate("text",
+                                   family = "Times New Roman",
+                                   x = 810,
+                                   y = .75,
+                                   label = "Pause",
+                                   size=8
+                                   )+
+                          annotate("rect",
+                                   xmin = 1065,
+                                   xmax = 1500,
+                                   ymin = -.15,
+                                   ymax = 1,
+                                   alpha = .2
+                                   )+
+                          annotate("text",
+                                   family = "Times New Roman",
+                                   x = 1300,
+                                   y = .75,
+                                   label = "Noun",
+                                   size=8
+                                   )
+  )
+
+```
+
+
+# Diff Match by verbal Fluency
+```{r}
+#Main Difference plot with Match by Verbak Fluency
+(DifferencePlot_Condition_byVerbalFluency<-ggplot(data_ana_1500,
+                     aes(TimeMS,
+                         DiffTC,
+                         linetype=match,
+                         color=match
+                         )
+                     )+
+                      stat_summary(fun.y=mean,
+                                   geom="line", size=1
+                                   )+
+                      facet_wrap(~EngVF_Bin
+                                 )+
+                      stat_summary(fun.data=mean_se,
+                                   geom="ribbon",
+                                   alpha=0.2,
+                                   color=NA
+                                   )+
+                      theme_bw(base_size=12
+                               )+
+                      labs(x="Time (Ms)",
+                           y="Differential Proportion of Fixations"
+                           )+ 
+                      theme(legend.justification=c(0,1), 
+                            legend.position="right",
+                            legend.title = element_blank(),
+                            legend.background=element_rect(color="black",
+                                                           fill="white"),
+                            text = element_text(family="Times New Roman",
+                                                size=25)
+                            )+
+                      geom_hline(yintercept = 0
+                                 )+
+                      coord_cartesian(ylim = c(-0.15, 1)
+                                      )+
+                      scale_linetype_manual(values=c("solid",
+                                                     "solid")
+                                            )+
+                      scale_color_manual(values=c("red",
+                                                  "black")
+                                         )+
+                      scale_x_continuous(breaks = c(0,400,800,1200)
+                                         )+
+                      annotate("rect",
+                               xmin = 200,
+                               xmax = 564,
+                               ymin = -.15,
+                               ymax = 1,
+                               alpha = .2
+                               )+
+                      annotate("text",
+                               family = "Times New Roman",
+                               x = 380,
+                               y = .75,
+                               label = "Article",
+                               size=8
+                               )+
+                      annotate("rect",
+                               xmin = 565,
+                               xmax = 1064,
+                               ymin = -.15,
+                               ymax = 1,
+                               alpha = .1
+                               )+
+                      annotate("text",
+                               family = "Times New Roman",
+                               x = 810,
+                               y = .75,
+                               label = "Pause",
+                               size=8
+                               )+
+                      annotate("rect",
+                               xmin = 1065,
+                               xmax = 1500,
+                               ymin = -.15,
+                               ymax = 1,
+                               alpha = .2
+                               )+
+                      annotate("text",
+                               family = "Times New Roman",
+                               x = 1300,
+                               y = .75,
+                               label = "Noun",
+                               size=8
+                               )
+ )
+
+```
+
+
+# Diff Match Grid Article by Verbal Fluency
+```{r}
+#Main Difference plot with Match Grid Article by Verbal Fluency
+(Difference_Grid_ArticleVerbalFluency<-ggplot(data_ana_1500,
+                                aes(TimeMS,
+                                    DiffTC,
+                                    linetype=match,
+                                    color=match
+                                    )
+                                )+
+                                stat_summary(fun.y=mean,
+                                             geom="line",
+                                             size=1
+                                             )+
+                                facet_grid(article~EngVF_Bin
+                                           )+
+                                stat_summary(fun.data=mean_se,
+                                             geom="ribbon",
+                                             alpha=0.2,
+                                             color=NA
+                                             )+
+                                theme_bw(base_size=12
+                                         )+
+                                labs(x="Time (Ms)",
+                                     y="Differential Proportion of Fixations"
+                                     )+ 
+                                theme(legend.justification=c(0,1), 
+                                      legend.position="right",
+                                      legend.title = element_blank(),
+                                      legend.background=element_rect(color="black",
+                                                                     fill="white"),
+                                      text = element_text(family="Times New Roman",
+                                                          size=25)
+                                      )+
+                                geom_hline(yintercept = 0
+                                           )+
+                                coord_cartesian(ylim = c(-0.15, 1)
+                                                )+
+                                scale_linetype_manual(values=c("solid",
+                                                               "solid")
+                                                      )+
+                                scale_color_manual(values=c("red",
+                                                            "black")
+                                                   )+
+                                scale_x_continuous(breaks = c(0,400,800,1200)
+                                                   )+
+                                annotate("rect",
+                                         xmin = 200,
+                                         xmax = 564,
+                                         ymin = -.15,
+                                         ymax = 1,
+                                         alpha = .2
+                                         )+
+                                annotate("text",
+                                         family = "Times New Roman",
+                                         x = 380,
+                                         y = .75,
+                                         label = "Article",
+                                         size=8
+                                         )+
+                                annotate("rect",
+                                         xmin = 565,
+                                         xmax = 1064,
+                                         ymin = -.15,
+                                         ymax = 1,
+                                         alpha = .1
+                                         )+
+                                annotate("text",
+                                         family = "Times New Roman",
+                                         x = 810,
+                                         y = .75,
+                                         label = "Pause",
+                                         size=8
+                                         )+
+                                annotate("rect",
+                                         xmin = 1065,
+                                         xmax = 1500,
+                                         ymin = -.15,
+                                         ymax = 1,
+                                         alpha = .2
+                                         )+
+                                annotate("text",
+                                         family = "Times New Roman",
+                                         x = 1300,
+                                         y = .75,
+                                         label = "Noun",
+                                         size=8)
+ )
+```
+
+
+# Save all difference plots
+```{r}
+ggsave("./graphs/DifferencePlot_Condition.png",
+       plot = DifferencePlot_Condition,
+       width = 40,
+       height = 20,
+       units = "cm"
+       )
+ggsave("./graphs/DifferencePlot_Condition_byArticle.png",
+       plot = DifferencePlot_Condition_byArticle,
+       width = 40,
+       height = 20,
+       units = "cm"
+       )
+ggsave("./graphs/DifferencePlot_Condition_byVerbalFluency.png",
+       plot = DifferencePlot_Condition_byVerbalFluency,
+       width = 40,
+       height = 20,
+       units = "cm"
+       )
+ggsave("./graphs/Difference_Grid_ArticleVerbalFluency.png",
+       plot = Difference_Grid_ArticleVerbalFluency,
+       width = 40,
+       height = 20,
+       units = "cm"
+       )
+```
+
+
+#Difference TC plots black and white For BU Publication
+```{r}
+(Main_DiffTC_bw<-ggplot(data_ana_1500,
+                        aes(TimeMS,
+                            DiffTC,
+                            linetype=match,
+                            color=match
+                            )
+                        )+
+                        stat_summary(fun.y=mean,
+                                     geom="line",
+                                     size=1
+                                     )+
+                        stat_summary(fun.data=mean_se,
+                                     geom="ribbon",
+                                     alpha=0.2,
+                                     color=NA
+                                     )+
+                        theme_bw(base_size=12
+                                 )+
+                        labs(x="Time (Ms)",
+                             y="Differential Proportion of Fixations"
+                             )+ 
+                        theme(legend.justification=c(.5,1), 
+                              legend.position="bottom",
+                              legend.title = element_blank(),
+                              legend.background=element_rect(color="black",
+                                                             fill="white"),
+                              text = element_text(family="Times New Roman",
+                                                  size=30)
+                              )+
+                        geom_hline(yintercept = 0
+                                   )+
+                        coord_cartesian(ylim = c(-0.15, 1)
+                                        )+
+                        scale_linetype_manual(values=c("dashed",
+                                                       "solid")
+                                              )+
+                        scale_color_manual(values=c("black",
+                                                    "black")
+                                           )+
+                        scale_x_continuous(breaks = c(0,400,800,1200)
+                                           )+
+                        annotate("rect",
+                                 xmin = 200,
+                                 xmax = 564,
+                                 ymin = -.15,
+                                 ymax = 1,
+                                 alpha = .2
+                                 )+
+                        annotate("text",
+                                 family = "Times New Roman",
+                                 x = 380,
+                                 y = .75,
+                                 label = "Article",
+                                 size=10
+                                 )+
+                        annotate("rect",
+                                 xmin = 565,
+                                 xmax = 1064,
+                                 ymin = -.15,
+                                 ymax = 1,
+                                 alpha = .1
+                                 )+
+                        annotate("text",
+                                 family = "Times New Roman",
+                                 x = 810,
+                                 y = .75,
+                                 label = "Pause",
+                                 size=10
+                                 )+
+                        annotate("rect",
+                                 xmin = 1065,
+                                 xmax = 1500,
+                                 ymin = -.15,
+                                 ymax = 1,
+                                 alpha = .2
+                                 )+
+                        annotate("text",
+                                 family = "Times New Roman",
+                                 x = 1300,
+                                 y = .75,
+                                 label = "Noun",
+                                 size=10)
+ )
+
+
+```
+
+
+#LMER Prep
+```{r}
+# Restrict time to greater 200-1000ms
+data_ana_FullWindow<-filter(data_ana_1500, TimeMS>199, TimeMS<1001)
+
+# Relevel so A condition is baseline
+data_ana_FullWindow$article<-fct_relevel(data_ana_FullWindow$article, "An",after=0)
+
+# Relevel so Same condition is baseline
+data_ana_FullWindow$match<-fct_relevel(data_ana_FullWindow$match, "Different",after=0)
+
+# Relevel so Low Proficiency group is baseline - Used for graphs only
+data_ana_FullWindow$EngVF_Bin<-fct_relevel(data_ana_FullWindow$EngVF_Bin, "High Proficiency",after=0)
+
+# Contrast code Proficiency - Not used
+data_ana_FullWindow$EngVF_Contrast<-data_ana_FullWindow$EngVF_Bin%>%
+  recode(`High Proficiency` = 0.5,
+         `Low Proficiency` = -.5)
+
+summary(data_ana_FullWindow$EngVF_Contrast)
+
+
+# Item is not unique to a target 
+# Code IS unique to a target But change to TargetCode
+data_ana_FullWindow<-rename(data_ana_FullWindow, TargetCode = code)
+
+```
+
+
+#Full Window Article and Pause LMER using Buildmer
+```{r}
+library(buildmer)
+#Specify maximal model
+model<-DiffTC~ match*article*EngVF_median    + (1 + match + article| Code)+ (1 + EngVF_median| TargetCode)
+
+## Random Slopes justification
+# Code - match each particiapnt sees match and mismatch
+# Code - Article each partiicpant sees An and A
+# Target Code (item) - VF responses to each item across VF
+# Target code  - NOT match or article since each display can only be 1 at a time.  
+
+
+# Call model in Buildmer function
+BuildModel_Full<- buildmer(model,
+                      data=data_ana_FullWindow,
+                      ddf="Satterthwaite",  
+                      REML= FALSE,
+                      control=lmerControl(optimizer="bobyqa"))
+
+#Buildmer outputs the optimal model using summary
+summary(BuildModel_Full)
+```
+
+# Bar graph contrast coded VF Bin
+```{r}
+# Group by for summary
+by_CondC<-group_by(data_ana_FullWindow,
+                   match,
+                   article)
+
+# Then summarize the Total Duration by Region
+(by_Group_CondC<-summarize(by_CondC,
+                           Differential_Proportion_Fixation=mean(DiffTC,
+                                                                 na.rm=TRUE)
+                           )
+  )
+
+(BarGraphgMatch_Article_AllVF<-ggplot(data=by_Group_CondC)+
+    geom_bar(mapping=aes(x = article,
+                         y= Differential_Proportion_Fixation,
+                         fill=match),
+             stat="identity",
+             position = "dodge"
+             )+
+  labs(x=element_blank(),
+       y="Differential Proportion of Fixations"
+       )+
+  theme(legend.justification=c(0,1), 
+        legend.position="bottom",
+        legend.title = element_blank(),
+        legend.background=element_rect(color="black",
+                                       fill="white"),
+        text = element_text(family="Times New Roman",
+                            size=25),
+        panel.background = element_rect(colour = "black",
+                                        size=0.5)
+        )+
+    scale_fill_manual(values=c("red", "black")
+                      )
+  )
+
+
+ggsave("./graphs/BarGraphgMatch_Article_AllVF.png",
+       plot = BarGraphgMatch_Article_AllVF,
+       width = 40,
+       height = 20,
+       units = "cm")
+```
+
+# Interaction plot - Article by Match with Verbal Fluency as continuous
+```{r Graph to interpret three-way interaction in model June 18th 2021}
+data_ana_FullWindow$fitted<-fitted(BuildModel_Full)
+
+(InteractionPlot<-ggplot(data=data_ana_FullWindow,
+                                          aes(x = EngVF_median,
+                                              y = DiffTC,
+                                          color = match,
+                                          linetype = article)
+                                          )+
+    facet_wrap(~match)+
+    geom_smooth(method='lm',
+                aes(y = fitted),
+                size = 1
+                )+
+  labs(x=element_blank(),
+       y="Differential Proportion of Fixations")+
+  theme(legend.justification=c(0,1),
+        legend.position="bottom",
+        legend.title = element_blank(),
+        legend.background=element_rect(color="black",
+                                       fill="white"),
+        text = element_text(family="Times New Roman",
+                            size=25),
+                panel.background = element_rect(colour = "black",
+                                                size=0.5)
+        )+
+   scale_linetype_manual(values = c("solid","dashed")
+                         )
+ )
+
+ggsave("./graphs/InteractionPlot.png",
+       plot = InteractionPlot,
+       width = 40,
+       height = 20,
+       units = "cm")
+```
+
+  
+# Competitor minus distractor fixation plots
+```{r}
+#Main Competitor minus distractor fixations plot
+(Main_DiffCompDist<-ggplot(data_ana_1500,
+                     aes(TimeMS,
+                         DiffCD,
+                         linetype=match,
+                         color=match)
+                     )+
+  stat_summary(fun.y=mean,
+               geom="line",
+               size=1
+               )+
+  stat_summary(fun.data=mean_se,
+               geom="ribbon",
+               alpha=0.2,
+               color=NA
+               )+
+  theme_bw(base_size=12
+           )+
+  labs(x="Time (Ms)",
+       y="Differential Proportion of Fixations"
+       )+ 
+  theme(legend.justification=c(0,1), 
+        legend.position="right",
+        legend.title = element_blank(),
+        legend.background=element_rect(color="black",
+                                       fill="white"),
+        text = element_text(family="Times New Roman",
+                            size=25)
+        )+
+  geom_hline(yintercept = 0
+             )+
+  coord_cartesian(ylim = c(-0.15, 1)
+                  )+
+  scale_linetype_manual(values=c("solid", "solid")
+                        )+
+  scale_color_manual(values=c("red", "black")
+                     )+
+  scale_x_continuous(breaks = c(0,400,800,1200)
+                     )+
+  annotate("rect",
+           xmin = 200,
+           xmax = 564,
+           ymin = -.15,
+           ymax = 1,
+           alpha = .2
+           )+
+  annotate("text",
+           family = "Times New Roman",
+           x = 380,
+           y = .75,
+           label = "Article",
+           size=8
+           )+
+  annotate("rect",
+           xmin = 565,
+           xmax = 1064,
+           ymin = -.15,
+           ymax = 1,
+           alpha = .1
+           )+
+  annotate("text",
+           family = "Times New Roman",
+           x = 810,
+           y = .75,
+           label = "Pause",
+           size=8
+           )+
+  annotate("rect",
+           xmin = 1065,
+           xmax = 1500,
+           ymin = -.15,
+           ymax = 1,
+           alpha = .2
+           )+
+  annotate("text",
+           family = "Times New Roman",
+           x = 1300,
+           y = .75,
+           label = "Noun", size=8)
+ )
+
+```
+
+```{r}
+# Competitor minus distractor fixations plot By article
+(ByArticle_DiffCompDist<-ggplot(data_ana_1500,
+                          aes(TimeMS,
+                              DiffCD,
+                              linetype=match,
+                              color=match)
+                          )+
+  stat_summary(fun.y=mean,
+               geom="line",
+               size=1
+               )+
+  facet_wrap(~article
+             )+
+  stat_summary(fun.data=mean_se,
+               geom="ribbon",
+               alpha=0.2,
+               color=NA
+               )+
+  theme_bw(base_size=12
+           )+
+  labs(x="Time (Ms)",
+       y="Differential Proportion of Fixations"
+       )+ 
+  theme(legend.justification=c(0,1), 
+        legend.position="right",
+        legend.title = element_blank(),
+        legend.background=element_rect(color="black",
+                                       fill="white"),
+        text = element_text(family="Times New Roman",
+                            size=25)
+        )+
+  geom_hline(yintercept = 0
+             )+
+  coord_cartesian(ylim = c(-0.15, 1)
+                  )+
+  scale_linetype_manual(values=c("solid",
+                                 "solid")
+                        )+
+  scale_color_manual(values=c("red",
+                              "black")
+                     )+
+  scale_x_continuous(breaks = c(0,400,800,1200)
+                     )+
+  annotate("rect",
+           xmin = 200,
+           xmax = 564,
+           ymin = -.15,
+           ymax = 1,
+           alpha = .2
+           )+
+  annotate("text",
+           family = "Times New Roman",
+           x = 380,
+           y = .75,
+           label = "Article",
+           size=8
+           )+
+  annotate("rect",
+           xmin = 565,
+           xmax = 1064,
+           ymin = -.15,
+           ymax = 1,
+           alpha = .1
+           )+
+  annotate("text",
+           family = "Times New Roman",
+           x = 810,
+           y = .75,
+           label = "Pause",
+           size=8
+           )+
+  annotate("rect",
+           xmin = 1065,
+           xmax = 1500,
+           ymin = -.15,
+           ymax = 1,
+           alpha = .2
+           )+
+  annotate("text",
+           family = "Times New Roman",
+           x = 1300,
+           y = .75,
+           label = "Noun",
+           size=8)
+  )
+
+
+```
+
+```{r}
+# Competitor minus distractor fixations plot by verbal fluency
+
+(ByVF_DiffCompDist<-ggplot(data_ana_1500,
+                           aes(TimeMS,DiffCD,
+                               linetype=match,
+                               color=match)
+                           )+
+  stat_summary(fun.y=mean,
+               geom="line",
+               size=1
+               )+
+  facet_wrap(~EngVF_Bin
+             )+
+  stat_summary(fun.data=mean_se,
+               geom="ribbon",
+               alpha=0.2,
+               color=NA
+               )+
+  theme_bw(base_size=12
+           )+
+  labs(x="Time (Ms)",
+       y="Differential Proportion of Fixations"
+       )+ 
+  theme(legend.justification=c(0,1), 
+        legend.position="right",
+        legend.title = element_blank(),
+        legend.background=element_rect(color="black",
+                                       fill="white"),
+        text = element_text(family="Times New Roman",
+                            size=25)
+        )+
+  geom_hline(yintercept = 0
+             )+
+  coord_cartesian(ylim = c(-0.15, 1)
+                  )+
+  scale_linetype_manual(values=c("solid",
+                                 "solid")
+                        )+
+  scale_color_manual(values=c("red",
+                              "black")
+                     )+
+  scale_x_continuous(breaks = c(0,400,800,1200)
+                     )+
+  annotate("rect",
+           xmin = 200,
+           xmax = 564,
+           ymin = -.15,
+           ymax = 1,
+           alpha = .2)+
+  annotate("text",
+           family = "Times New Roman",
+           x = 380,
+           y = .75,
+           label = "Article",
+           size=8)+
+  annotate("rect",
+           xmin = 565,
+           xmax = 1064,
+           ymin = -.15,
+           ymax = 1,
+           alpha = .1
+           )+
+  annotate("text",
+           family = "Times New Roman",
+           x = 810,
+           y = .75,
+           label = "Pause",
+           size=8
+           )+
+  annotate("rect",
+           xmin = 1065,
+           xmax = 1500,
+           ymin = -.15,
+           ymax = 1,
+           alpha = .2
+           )+
+  annotate("text",
+           family = "Times New Roman",
+           x = 1300,
+           y = .75,
+           label = "Noun",
+           size=8)
+ )
+```
+
+```{r}
+#Competitor minus distractor fixations plot Articl by  Verbal fluency Grid
+(VF_Article_Grid_DiffCompDist<-ggplot(data_ana_1500,
+                                      aes(TimeMS,
+                                          DiffCD,
+                                          linetype=match,
+                                          color=match)
+                                      )+
+  stat_summary(fun.y=mean, geom="line", size=1
+               )+
+  facet_grid(article~EngVF_Bin
+             )+
+  stat_summary(fun.data=mean_se,
+               geom="ribbon",
+               alpha=0.2,
+               color=NA
+               )+
+  theme_bw(base_size=12
+           )+
+  labs(x="Time (Ms)",
+       y="Differential Proportion of Fixations"
+       )+ 
+  theme(legend.justification=c(0,1), 
+        legend.position="right",
+        legend.title = element_blank(),
+        legend.background=element_rect(color="black",fill="white"),
+        text = element_text(family="Times New Roman",size=25)
+        )+
+  geom_hline(yintercept = 0
+             )+
+  coord_cartesian(ylim = c(-0.15,
+                           1)
+                  )+
+  scale_linetype_manual(values=c("solid",
+                                 "solid")
+                        )+
+  scale_color_manual(values=c("red",
+                              "black")
+                     )+
+  scale_x_continuous(breaks = c(0,400,800,1200)
+                     )+
+  annotate("rect",
+           xmin = 200,
+           xmax = 564,
+           ymin = -.15,
+           ymax = 1,
+           alpha = .2
+           )+
+  annotate("text",
+           family = "Times New Roman",
+           x = 380,
+           y = .75,
+           label = "Article",
+           size=8
+           )+
+  annotate("rect",
+           xmin = 565,
+           xmax = 1064,
+           ymin = -.15,
+           ymax = 1,
+           alpha = .1
+           )+
+  annotate("text",
+           family = "Times New Roman",
+           x = 810,
+           y = .75,
+           label = "Pause",
+           size=8
+           )+
+  annotate("rect",
+           xmin = 1065,
+           xmax = 1500,
+           ymin = -.15,
+           ymax = 1,
+           alpha = .2
+           )+
+  annotate("text",
+           family = "Times New Roman",
+           x = 1300,
+           y = .75,
+           label = "Noun",
+           size=8)
+ )
+
+```
+
+#Save all Plots
+```{r Save CD Plots}
+ggsave("./graphs/Main_DiffCompDist.png",
+       plot = Main_DiffCompDist,
+       width = 40,
+       height = 20,
+       units = "cm")
+
+ggsave("./graphs/ByArticle_DiffCompDist.png",
+       plot = ByArticle_DiffCompDist,
+       width = 40,
+       height = 20,
+       units = "cm")
+
+ggsave("./graphs/ByVF_DiffCompDist.png",
+       plot = ByVF_DiffCD,
+       width = 40,
+       height = 20,
+       units = "cm")
+
+ggsave("./graphs/VF_Article_Grid_DiffCompDist.png",
+       plot = VF_Article_Grid_DiffCompDist,
+       width = 40,
+       height = 20,
+       units = "cm")
+```
+
+
+
+# Plausibility Analysis
+```{r Plausibility Analysis}
+
+plausibility <- read.csv("./data/Plausibility_Ratings.csv")
+head(plausibility)
+
+(summaryPlausibility<-plausibility%>%
+  group_by(ArticleCond)%>%
+  summarise(meanRating = mean(Score, na.rm = TRUE)))
+
+(summaryPlausibility_ByMatch<-plausibility%>%
+  group_by(ArticleCond,CompetitorCond)%>%
+  summarise(meanRating = mean(Score, na.rm = TRUE)))
+
+an_items <- plausibility %>%
+  filter(ArticleCond == "N")
+
+a_items <- plausibility %>%
+  filter(ArticleCond == "A")
+
+t.test(an_items$Score, a_items$Score, paired=TRUE, alternative = "two.sided")
+
+
+#  ArticleCond meanRating
+#1 A                 4.77
+#2 N                 4.24
+
+
+#	Paired t-test
+
+#data:  an_items$Score and a_items$Score
+#t = -12.126, df = 3215, p-value < 2.2e-16
+#alternative hypothesis: true difference in means is not equal to 0
+#95 percent confidence interval:
+# -0.6108306 -0.4407863
+#sample estimates:
+#mean of the differences 
+#             -0.5258085 
+
+# Overall, an items are significantly less plausible than a items, so this works in our favor bc they're still predicting. Add this in discussion as post-hoc test.
+```
+
